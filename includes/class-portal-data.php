@@ -203,6 +203,7 @@ class ThreeR_Portal_Data {
                 $data = json_decode( $row->payload, true );
                 if ( is_array( $data ) ) {
                     $data = array_replace_recursive( $demo, $data );
+                    if ( isset( $data['alarms_live'] ) ) { $data['alarms'] = $data['alarms_live']; }
                     $data['demo']       = false;
                     $data['updated_at'] = $row->updated_at;
                     return $data;
@@ -225,9 +226,9 @@ class ThreeR_Portal_Data {
             'settings' => [
                 'Total cycle time'      => '24 hr',
                 'Motor forward'         => '120 s',
-                'Wait'                  => '100 s',
+                'Wait after forward'    => '100 s',
                 'Motor reverse'         => '120 s',
-                'Wait (2)'              => '100 s',
+                'Wait after reverse'    => '100 s',
                 'Wait in cycle'         => '5 min',
                 'Blower on time'        => '400 s',
                 'Compost out'           => '30',
@@ -300,6 +301,15 @@ class ThreeR_Portal_Data {
                 'customer_id' => 1,
                 'status'      => 'online',
                 'installed_at'=> '2026-11-01',
+            ],
+            (object)[
+                'id'          => 5,
+                'machine_uid' => '3R-VZG-1600',
+                'name'        => 'Compost Machine 1600 kg',
+                'location'    => 'Vizag',
+                'customer_id' => 1,
+                'status'      => 'online',
+                'installed_at'=> '2026-11-19',
             ],
         ];
         return $machines;

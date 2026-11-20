@@ -79,6 +79,7 @@ class ThreeR_Ingest {
             'payload'     => wp_json_encode( $payload ),
             'updated_at'  => current_time( 'mysql' ),
         ] );
+        do_action( 'tru_panel_saved', $uid, $payload, $raw );
         return [ 'ok' => true, 'registers' => count( $new ) ];
     }
 
@@ -102,7 +103,15 @@ class ThreeR_Ingest {
             foreach ( $recs as $rec ) {
                 if ( is_array( $rec ) && isset( $rec['addr'], $rec['data'] ) ) {
                     $vals = is_array( $rec['data'] ) ? $rec['data'] : json_decode( (string) $rec['data'], true );
-                    if ( is_array( $vals ) ) {
+                    if ( is_array( $vals ) && (int) $rec['addr'] === 1281 ) {
+                        // Coil read of Y0..Y3 (Delta Y0 = 1280, router is 1-based): router returns the coil byte in the high byte
+                        $v0 = (int) ( array_values( $vals )[0] ?? 0 );
+                        $out[9000] = ( $v0 & 0xFF00 ) ? ( $v0 >> 8 ) : $v0;
+                    } elseif ( is_array( $vals ) && (int) $rec['addr'] === 2054 ) {
+                        // Coil M5 (Delta M0 = 2048, router 1-based): auto/manual mode, coil byte comes back in the high byte
+                        $v0 = (int) ( array_values( $vals )[0] ?? 0 );
+                        $out[9001] = ( $v0 & 0xFF00 ) ? ( $v0 >> 8 ) : $v0;
+                    } elseif ( is_array( $vals ) ) {
                         foreach ( array_values( $vals ) as $i => $v ) {
                             if ( is_numeric( $v ) ) { $out[ (int) $rec['addr'] - 4097 + $i ] = (int) $v; }
                         }
@@ -139,13 +148,60 @@ class ThreeR_Ingest {
         };
         $p = [
             'status' => [
-                'healthy' => isset( $r[1] ) ? ( (int) $r[1] === 1 ) : true,
-                'label'   => ( isset( $r[1] ) && (int) $r[1] !== 1 ) ? 'M/C FAULT' : 'M/C HEALTHY',
+                'healthy' => true,
+                'label'   => 'M/C HEALTHY',
             ],
             'live'     => [],
             'outputs'  => [ 'main_motor' => '—', 'blower' => '—', 'heater' => '—', 'door' => '—' ],
             'settings' => [],
         ];
+        // D2 = machine state code (HMI text bank): 1 composting, 2 cycle complete/standby, 3 removing compost,
+        // 4 emergency stop, 5 main motor trip, 6 blower motor trip, 7 door open, 8 phase loss/reverse, 9 heater trip
+        if ( isset( $r[2] ) ) {
+            $names = [ 0 => 'IDLE', 1 => 'COMPOSTING', 2 => 'CYCLE COMPLETE / STANDBY', 3 => 'REMOVING COMPOST',
+                       4 => 'EMERGENCY STOP', 5 => 'MAIN MOTOR TRIP', 6 => 'BLOWER MOTOR TRIP', 7 => 'DOOR OPEN',
+                       8 => 'PHASE LOSS / REVERSE FAULT', 9 => 'HEATER TRIP' ];
+            $c = (int) $r[2];
+            $p['status'] = [
+                'healthy'       => ! ( $c >= 4 && $c <= 9 ),
+                'label'         => $names[ $c ] ?? ( 'STATE ' . $c ),
+                'cycle_running' => ( $c === 1 || $c === 3 ),
+                'state_code'    => $c,
+            ];
+            $p['alarms_live'] = [
+                'Emergency stop'          => $c === 4,
+                'Main motor trip'         => $c === 5,
+                'Blower motor trip'       => $c === 6,
+                'Door open'               => $c === 7,
+                'Phase loss / reverse'    => $c === 8,
+                'Heater trip'             => $c === 9,
+            ];
+        }
+        // D0 = main motor status (confirmed by manual test with operator): 0 off, 1 forward, 2 reverse
+        if ( isset( $r[0] ) ) {
+            $p['outputs']['main_motor'] = [ 0 => 'OFF', 1 => 'FWD', 2 => 'REV' ][ (int) $r[0] ] ?? ( 'CODE ' . (int) $r[0] );
+        }
+        // Y outputs (coils 1280..1283), confirmed by operator manual test: bit0 Y0 main fwd, bit1 Y1 main rev, bit2 Y2 blower, bit3 Y3 heater
+        if ( isset( $r[9000] ) ) {
+            $y = (int) $r[9000];
+            $p['outputs']['blower'] = ( $y & 4 ) ? 'ON' : 'OFF';
+            $p['outputs']['heater'] = ( $y & 8 ) ? 'ON' : 'OFF';
+            if ( ! isset( $r[0] ) ) { $p['outputs']['main_motor'] = ( $y & 1 ) ? 'FWD' : ( ( $y & 2 ) ? 'REV' : 'OFF' ); }
+        }
+        // M5 = Auto/Manual: 1 = Manual, 0 = Auto (v2.3.11 test: machine in Auto running a cycle read M5 = 0)
+        if ( isset( $r[9001] ) ) { $p['status']['mode'] = ( (int) $r[9001] & 1 ) ? 'Manual' : 'Auto'; }
+        // D550 = waste added (kg, assumed whole kg; confirm once non-zero)
+        if ( isset( $r[550] ) ) { $p['live']['waste_added_kg'] = (int) $r[550]; }
+        // D10 = alarm bit word: value 4 (bit 2) = door open (confirmed by manual test); 128 seen during compost-out step (not mapped)
+        $door_open = isset( $r[10] ) ? ( ( (int) $r[10] & 4 ) === 4 ) : null;
+        if ( $door_open !== null ) {
+            $p['outputs']['door'] = $door_open ? 'OPEN' : 'CLOSE';
+            if ( isset( $p['alarms_live'] ) ) { $p['alarms_live']['Door open'] = $door_open || $p['alarms_live']['Door open']; }
+        }
+        // D1 is NOT a health flag: it reads 1 when idle and 2 while a cycle runs (1600 kg machine). Health comes from D2 only.
+        // D618:D619 = live motor current (A), 32-bit float, low word first (programmer, 2026-11-19)
+        $cur = self::f32( $r, 618 );
+        if ( $cur !== null && is_finite( $cur ) && abs( $cur ) < 1000 ) { $p['live']['motor_current_a'] = round( $cur, 2 ); }
         if ( isset( $r[102] ) ) { $p['live']['temperature_c'] = round( $r[102] / 10, 1 ); }
         $kwh = self::f32( $r, 564 );
         if ( $kwh !== null && is_finite( $kwh ) ) { $p['live']['last_cycle_kwh'] = round( $kwh, 3 ); }
@@ -153,12 +209,12 @@ class ThreeR_Ingest {
         $map = [
             'Total cycle time'   => $g( 416, 1, ' hr' ),
             'Motor forward'      => $g( 411, 10, ' s' ),
-            'Wait'               => $g( 413, 10, ' s' ),
+            'Wait after forward' => $g( 418, 10, ' s' ),
             'Motor reverse'      => $g( 412, 10, ' s' ),
-            'Wait (2)'           => $g( 418, 10, ' s' ),
+            'Wait after reverse' => $g( 413, 10, ' s' ),
             'Wait in cycle'      => $g( 415, 1, ' min' ),
             'Blower on time'     => $g( 417, 10, ' s' ),
-            'Compost out'        => $g( 419 ),
+            'Compost out'        => $g( 419, 1, ' min' ),
             'Heater lower limit' => $g( 420, 10, ' °C' ),
             'Heater upper limit' => $g( 421, 10, ' °C' ),
             'Fwd/Rev cycles'     => $g( 414 ),
@@ -171,7 +227,24 @@ class ThreeR_Ingest {
         if ( $ol !== null && is_finite( $ol ) ) { $map['Overload current'] = number_format( $ol, 1 ) . ' A'; }
         $so = self::f32( $r, 590 );
         if ( $so !== null && is_finite( $so ) ) { $map['Starting overload'] = number_format( $so, 1 ) . ' A'; }
+        // Running (actual) timers per programmer's list: D50 fwd s, D58 wait-fwd s, D51 rev s, D52 wait-rev s,
+        // D54:D55 wait-in-cycle min:sec, D62 blower s, D59:D60 compost-out min:sec
+        $now = function ( $key, $txt ) use ( &$map ) {
+            if ( isset( $map[ $key ] ) && $txt !== null ) { $map[ $key ] .= '  ·  now ' . $txt; }
+        };
+        $sec = fn( $d ) => isset( $r[ $d ] ) ? number_format( $r[ $d ] / 10, 1, '.', '' ) . ' s' : null; // running timers are in 0.1 s like the set values
+        $ms  = fn( $m, $s ) => ( isset( $r[ $m ], $r[ $s ] ) ) ? sprintf( '%d:%02d', $r[ $m ], $r[ $s ] ) : null;
+        $now( 'Motor forward', $sec( 50 ) );
+        $now( 'Wait after forward', $sec( 58 ) );
+        $now( 'Motor reverse', $sec( 51 ) );
+        $now( 'Wait after reverse', $sec( 52 ) );
+        $now( 'Wait in cycle', $ms( 54, 55 ) );
+        $now( 'Blower on time', $sec( 62 ) );
+        $now( 'Compost out', $ms( 59, 60 ) );
+        if ( isset( $p['live']['motor_current_a'] ) ) { $map['Actual current'] = number_format( $p['live']['motor_current_a'], 2 ) . ' A'; }
         foreach ( $map as $k => $v ) { if ( $v !== null ) { $p['settings'][ $k ] = $v; } }
+        if ( isset( $r[414] ) ) { $p['settings']['Fwd/Rev cycles'] = (string) $r[414]; }
+        if ( isset( $r[425] ) ) { $p['live']['cycles_done'] = (int) $r[425]; }
         return $p;
     }
 
@@ -198,7 +271,8 @@ class ThreeR_Ingest {
         $url = rest_url( '3r/v1/ingest/3R-VZG-1000' );
         echo '<div class="wrap"><h1>3R Data Ingest</h1>';
         echo '<p>The router sends HTTP POST (JSON) to this URL with the header below.</p>';
-        echo '<p><b>URL</b><br><code>' . esc_html( $url ) . '</code></p>';
+        echo '<p><b>URL — Vizag 1000 kg</b><br><code>' . esc_html( $url ) . '</code></p>';
+        echo '<p><b>URL — Vizag 1600 kg</b><br><code>' . esc_html( rest_url( '3r/v1/ingest/3R-VZG-1600' ) ) . '</code></p>';
         echo '<p><b>Header</b><br><code>X-3R-Token: ' . esc_html( get_option( 'tru_ingest_token' ) ) . '</code></p>';
         $last = get_option( 'tru_ingest_last' );
         echo '<h2>Last request received</h2>';

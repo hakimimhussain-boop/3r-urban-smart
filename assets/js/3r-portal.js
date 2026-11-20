@@ -233,7 +233,7 @@ document.addEventListener('DOMContentLoaded', function () {
       h.className = 'tru-panel-health ' + (d.status.healthy ? 'ok' : 'bad');
       root.querySelectorAll('[data-out]').forEach(function (el) {
         var v = String(d.outputs[el.getAttribute('data-out')] || '');
-        pill(el, v === 'ON' || v === 'OPEN', v, false);
+        pill(el, v === 'ON' || v === 'OPEN' || v === 'FWD' || v === 'REV', v, false);
       });
       root.querySelectorAll('[data-alarm]').forEach(function (el) {
         var a = !!d.alarms[el.getAttribute('data-alarm')];

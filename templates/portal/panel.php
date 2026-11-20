@@ -24,7 +24,7 @@ include $partials . 'portal-header.php';
 $dash_url = isset( $page_ids['3r-portal-dashboard'] ) ? get_permalink( $page_ids['3r-portal-dashboard'] ) : '#';
 $mach_url = isset( $page_ids['3r-portal-machine'] ) ? add_query_arg( 'uid', $machine->machine_uid, get_permalink( $page_ids['3r-portal-machine'] ) ) : '#';
 $healthy  = ! empty( $panel['status']['healthy'] );
-$onoff    = fn( $v ) => in_array( strtoupper( (string) $v ), [ 'ON', 'OPEN' ], true ) ? 'on' : 'off';
+$onoff    = fn( $v ) => in_array( strtoupper( (string) $v ), [ 'ON', 'OPEN', 'FWD', 'REV' ], true ) ? 'on' : 'off';
 ?>
 <div class="tru-panel" data-uid="<?php echo esc_attr( $uid ); ?>">
 
