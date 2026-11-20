@@ -57,6 +57,7 @@ class ThreeR_Fleet {
             temp float NULL,
             kwh float NULL,
             current float NULL,
+            meter float NULL,
             waste int NULL,
             cycles int NULL,
             alarms int NOT NULL DEFAULT 0,
@@ -111,6 +112,7 @@ class ThreeR_Fleet {
             'temp'   => isset( $payload['live']['temperature_c'] ) ? (float) $payload['live']['temperature_c'] : null,
             'kwh'    => isset( $payload['live']['last_cycle_kwh'] ) ? (float) $payload['live']['last_cycle_kwh'] : null,
             'current' => isset( $payload['live']['motor_current_a'] ) ? (float) $payload['live']['motor_current_a'] : null,
+            'meter'  => isset( $payload['live']['energy_meter_kwh'] ) ? (float) $payload['live']['energy_meter_kwh'] : null,
             'waste'  => isset( $payload['live']['waste_added_kg'] ) ? (int) $payload['live']['waste_added_kg'] : null,
             'cycles' => isset( $payload['live']['cycles_done'] ) ? (int) $payload['live']['cycles_done'] : null,
             'alarms' => (int) ( $raw[10] ?? 0 ),
@@ -154,7 +156,7 @@ class ThreeR_Fleet {
         $hours = max( 1, min( 720, (int) ( $req->get_param( 'hours' ) ?: 24 ) ) );
         $from  = date( 'Y-m-d H:i:s', current_time( 'timestamp' ) - $hours * 3600 );
         $rows  = $wpdb->get_results( $wpdb->prepare(
-            "SELECT ts, state, motor, blower, heater, temp, kwh, current, waste, cycles, alarms FROM `$t` WHERE machine_uid = %s AND ts >= %s ORDER BY ts ASC",
+            "SELECT ts, state, motor, blower, heater, temp, kwh, current, meter, waste, cycles, alarms FROM `$t` WHERE machine_uid = %s AND ts >= %s ORDER BY ts ASC",
             $req['uid'], $from
         ), ARRAY_A );
         $n = count( $rows );

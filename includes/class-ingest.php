@@ -203,8 +203,16 @@ class ThreeR_Ingest {
         $cur = self::f32( $r, 618 );
         if ( $cur !== null && is_finite( $cur ) && abs( $cur ) < 1000 ) { $p['live']['motor_current_a'] = round( $cur, 2 ); }
         if ( isset( $r[102] ) ) { $p['live']['temperature_c'] = round( $r[102] / 10, 1 ); }
-        $kwh = self::f32( $r, 564 );
-        if ( $kwh !== null && is_finite( $kwh ) ) { $p['live']['last_cycle_kwh'] = round( $kwh, 3 ); }
+        // Energy (programmer, 2026-11-20): D109 = cumulative energy meter in 0.01 kWh (949 = 9.49 kWh);
+        // D560 = meter value at cycle start, D562 = meter value at cycle stop; cycle energy = D562 - D560.
+        // (D564 returned garbage ~5.7e31 after a cycle on the 1000 kg, so it is no longer used.)
+        if ( isset( $r[109] ) ) { $p['live']['energy_meter_kwh'] = round( ( (int) $r[109] ) / 100, 2 ); }
+        $start = isset( $r[560] ) ? (int) $r[560] : null;
+        $stop  = isset( $r[562] ) ? (int) $r[562] : null;
+        $kwh   = 0;
+        if ( $start !== null && $stop !== null && $stop > 0 && $stop >= $start ) { $kwh = ( $stop - $start ) / 100; }
+        $p['live']['last_cycle_kwh'] = round( $kwh, 2 );
+        if ( $start !== null && isset( $r[109] ) && (int) $r[109] >= $start && $start > 0 ) { $p['live']['cycle_kwh_so_far'] = round( ( (int) $r[109] - $start ) / 100, 2 ); }
         if ( isset( $r[70], $r[71] ) ) { $p['live']['cycle_time'] = $r[70] . ':' . $r[71] . ':0'; }
         $map = [
             'Total cycle time'   => $g( 416, 1, ' hr' ),
