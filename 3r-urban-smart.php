@@ -3,7 +3,7 @@
  * Plugin Name:     3R Urban Smart Solutions
  * Plugin URI:      https://3rurban.com
  * Description:     Full 3R Urban Smart Solutions platform — public website + customer portal with live telemetry, alerts, reports, and account management.
- * Version:         2.6.2
+ * Version:         2.6.3
  * Author:          3R Urban Smart Solutions
  * Author URI:      https://3rurban.com
  * Text Domain:     3r-urban
@@ -13,7 +13,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'TRU_VERSION',    '2.6.2' );
+define( 'TRU_VERSION',    '2.6.3' );
 define( 'TRU_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'TRU_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 
@@ -56,6 +56,18 @@ add_action( 'plugins_loaded', function () {
     new ThreeR_Fleet();
     new ThreeR_Reports();
     new ThreeR_Alerts();
+
+    // Never let LiteSpeed/page caches store our live REST data (stale history hid new readings).
+    add_filter( 'rest_post_dispatch', function ( $result, $server, $request ) {
+        if ( strpos( $request->get_route(), '/3r/v1' ) === 0 ) {
+            if ( ! headers_sent() ) {
+                header( 'X-LiteSpeed-Cache-Control: no-cache, no-store' );
+                header( 'Cache-Control: no-store, no-cache, must-revalidate, max-age=0' );
+            }
+            do_action( 'litespeed_control_set_nocache', '3R live API' );
+        }
+        return $result;
+    }, 10, 3 );
 
     // Create any new pages (e.g. Live Panel) after a plugin update without re-activation.
     if ( get_option( 'tru_version' ) !== TRU_VERSION ) {
