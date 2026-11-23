@@ -82,6 +82,21 @@ class ThreeR_Fleet {
         register_rest_route( '3r/v1', '/fleet/(?P<uid>[A-Z0-9\-]+)/history', [
             'methods' => 'GET', 'callback' => [ $this, 'get_history' ], 'permission_callback' => [ $this, 'perm' ],
         ] );
+        register_rest_route( '3r/v1', '/fleet/(?P<uid>[A-Z0-9\-]+)/raw', [
+            'methods' => 'GET', 'callback' => [ $this, 'get_raw' ],
+            'permission_callback' => function () { return current_user_can( 'manage_options' ); },
+        ] );
+    }
+
+    /** Admin-only: raw register dump for commissioning / mapping new PLC programs. */
+    public function get_raw( $req ) {
+        global $wpdb;
+        $t   = $wpdb->prefix . ThreeR_Ingest::TABLE;
+        $row = $wpdb->get_row( $wpdb->prepare( "SELECT payload, updated_at FROM `$t` WHERE machine_uid = %s", $req['uid'] ) );
+        $p   = $row ? json_decode( $row->payload, true ) : [];
+        $raw = ( is_array( $p ) && isset( $p['raw'] ) ) ? $p['raw'] : [];
+        ksort( $raw );
+        return [ 'uid' => $req['uid'], 'updated_at' => $row ? $row->updated_at : null, 'raw' => $raw ];
     }
 
     public function perm( $req ) {

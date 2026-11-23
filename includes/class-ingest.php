@@ -72,7 +72,7 @@ class ThreeR_Ingest {
         $old = $row ? json_decode( $row, true ) : [];
         $raw = ( is_array( $old ) && isset( $old['raw'] ) ) ? $old['raw'] : [];
         foreach ( $new as $d => $v ) { $raw[ $d ] = $v; }
-        $payload = self::build_panel( $raw );
+        $payload = ( strpos( $uid, '3R-ESP-250' ) === 0 ) ? self::build_panel_comp250( $raw ) : self::build_panel( $raw );
         $payload['raw'] = $raw;
         $wpdb->replace( $t, [
             'machine_uid' => $uid,
@@ -139,6 +139,64 @@ class ThreeR_Ingest {
         $b = pack( 'v2', $raw[ $lo ] & 0xFFFF, $raw[ $lo + 1 ] & 0xFFFF ); // low word first
         $u = unpack( 'g', $b );
         return $u[1];
+    }
+
+    /**
+     * COMP-250 (Spain) register profile. Mapped 2026-11-23 from HMI photos vs raw registers:
+     * D70..D73 elapsed cycle sec/min/hr/days; D414 cycle days (Setting-1); D416 total cycle days (Help screen);
+     * D421 heating set temp x10; D438 cooling set temp x10; D426 heater cut-off x10; D436 inside/outside diff x10;
+     * D580/D590/D618 floats (overload, starting overload, actual current); D598 freq x100; D102 inside temp x10.
+     * Note: the HMI 'daily capacity' box (53) just mirrors elapsed seconds; D450..D452 are NOT capacity.
+     * Heater limits, motor minutes, humidity and weight are NOT located yet, so they are not shown.
+     */
+    public static function build_panel_comp250( $r ) {
+        $p = [
+            'status'   => [ 'healthy' => true, 'label' => 'M/C HEALTHY' ],
+            'live'     => [],
+            'outputs'  => [ 'main_motor' => '—', 'blower' => '—', 'heater' => '—', 'door' => '—' ],
+            'settings' => [],
+        ];
+        if ( isset( $r[2] ) ) {
+            $names = [ 0 => 'IDLE', 1 => 'COMPOSTING', 2 => 'CYCLE COMPLETE / STANDBY', 3 => 'REMOVING COMPOST',
+                       4 => 'EMERGENCY STOP', 5 => 'MAIN MOTOR TRIP', 6 => 'BLOWER MOTOR TRIP', 7 => 'DOOR OPEN',
+                       8 => 'PHASE LOSS / REVERSE FAULT', 9 => 'HEATER TRIP' ];
+            $c = (int) $r[2];
+            $p['status'] = [ 'healthy' => ! ( $c >= 4 && $c <= 9 ), 'label' => $names[ $c ] ?? ( 'STATE ' . $c ),
+                             'cycle_running' => ( $c === 1 || $c === 3 ), 'state_code' => $c ];
+        }
+        if ( isset( $r[0] ) ) { $p['outputs']['main_motor'] = [ 0 => 'OFF', 1 => 'FWD', 2 => 'REV' ][ (int) $r[0] ] ?? '—'; }
+        if ( isset( $r[9000] ) ) {
+            $y = (int) $r[9000];
+            $p['outputs']['blower'] = ( $y & 4 ) ? 'ON' : 'OFF';
+            $p['outputs']['heater'] = ( $y & 8 ) ? 'ON' : 'OFF';
+        }
+        if ( isset( $r[9001] ) ) { $p['status']['mode'] = ( (int) $r[9001] & 1 ) ? 'Manual' : 'Auto'; }
+        if ( isset( $r[102] ) ) { $p['live']['temperature_c'] = round( $r[102] / 10, 1 ); } // inside heater temp (D102 read 86.1 vs HMI 85.5 C)
+        if ( isset( $r[132] ) ) { $p['live']['humidity_pct'] = (int) $r[132]; }
+        if ( isset( $r[109] ) ) { $p['live']['energy_meter_kwh'] = round( ( (int) $r[109] & 0xFFFF ) / 100, 2 ); } // 0.01 kWh, unsigned 16-bit (wraps at 655.35)
+        if ( isset( $r[70], $r[71], $r[72], $r[73] ) ) {
+            $h = (int) $r[73] * 24 + (int) $r[72];
+            $p['live']['cycle_time'] = $h . ':' . (int) $r[71] . ':' . (int) $r[70];
+        }
+        $m = [
+            'Cycle days (set)'      => isset( $r[414] ) ? (int) $r[414] . ' days' : null,
+            'Total cycle (set)'     => isset( $r[416] ) ? (int) $r[416] . ' days' : null,
+            'Heating set temp'      => isset( $r[421] ) ? number_format( $r[421] / 10, 1 ) . ' °C' : null,
+            'Cooling set temp'      => isset( $r[438] ) ? number_format( $r[438] / 10, 1 ) . ' °C' : null,
+            'Humidity'              => isset( $r[132] ) ? (int) $r[132] . ' %' : null, // D132 read 4 vs HMI 4 % (probable, unconfirmed)
+            'Outside temp'          => isset( $r[110] ) ? number_format( $r[110] / 10, 1 ) . ' °C' : null,
+            'Heater cut-off'        => isset( $r[426] ) ? number_format( $r[426] / 10, 1 ) . ' °C' : null,
+            'Inside/outside diff'   => isset( $r[436] ) ? number_format( $r[436] / 10, 1 ) . ' °C' : null,
+            'Motor frequency'       => isset( $r[598] ) ? number_format( $r[598] / 100, 2 ) . ' Hz' : null,
+        ];
+        $ol = self::f32( $r, 580 );
+        if ( $ol !== null && is_finite( $ol ) ) { $m['Overload current'] = number_format( $ol, 1 ) . ' A'; }
+        $so = self::f32( $r, 590 );
+        if ( $so !== null && is_finite( $so ) ) { $m['Starting overload'] = number_format( $so, 1 ) . ' A'; }
+        $cur = self::f32( $r, 618 );
+        if ( $cur !== null && is_finite( $cur ) && abs( $cur ) < 1000 ) { $p['live']['motor_current_a'] = round( $cur, 2 ); }
+        foreach ( $m as $k => $v ) { if ( $v !== null ) { $p['settings'][ $k ] = $v; } }
+        return $p;
     }
 
     public static function build_panel( $r ) {
