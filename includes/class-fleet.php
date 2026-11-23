@@ -72,7 +72,22 @@ class ThreeR_Fleet {
             [ 'uid' => '3R-VZG-1600', 'name' => 'Compost Machine 1600 kg', 'location' => 'Vizag', 'capacity_kg' => 1600 ],
         ];
         $opt = get_option( 'tru_fleet' );
-        return ( is_array( $opt ) && $opt ) ? $opt : $default;
+        $f = ( is_array( $opt ) && $opt ) ? $opt : $default;
+        foreach ( $f as &$m ) { if ( empty( $m['customer'] ) ) { $m['customer'] = self::customer_of( $m['uid'] ); } }
+        return $f;
+    }
+
+    public static function customer_of( $uid ) {
+        return strpos( (string) $uid, '3R-ESP' ) === 0 ? 'LEANpio' : 'Inorbit';
+    }
+
+    public static function dash_slug( $customer ) {
+        return strtolower( $customer ) . '-dashboard';
+    }
+
+    public static function customer_for( $uid ) {
+        foreach ( self::fleet() as $m ) { if ( $m['uid'] === $uid ) { return $m['customer']; } }
+        return self::customer_of( $uid );
     }
 
     public function routes() {
@@ -150,7 +165,9 @@ class ThreeR_Fleet {
         global $wpdb;
         $t = $wpdb->prefix . ThreeR_Ingest::TABLE;
         $out = [];
+        $cust = sanitize_text_field( (string) $req->get_param( 'customer' ) );
         foreach ( self::fleet() as $m ) {
+            if ( $cust !== '' && strcasecmp( $m['customer'], $cust ) !== 0 ) { continue; }
             $row = $wpdb->get_row( $wpdb->prepare( "SELECT payload, updated_at FROM `$t` WHERE machine_uid = %s", $m['uid'] ) );
             $p = $row ? json_decode( $row->payload, true ) : null;
             if ( is_array( $p ) ) { unset( $p['raw'] ); }

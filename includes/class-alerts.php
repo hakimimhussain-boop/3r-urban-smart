@@ -29,13 +29,13 @@ class ThreeR_Alerts {
         return $uid;
     }
 
-    public static function mail( $subject, $body ) {
-        $to = self::recipients();
+    public static function mail( $subject, $body, $customer = 'Inorbit' ) {
+        $to = array_values( array_unique( array_merge( self::recipients(), ThreeR_Reports::customer_emails( $customer ) ) ) );
         if ( ! $to ) { return false; }
         $fe = function () { return get_option( 'tru_report_from', 'admin@urbancompost.cloud' ); };
-        $fn = function () { return 'Inorbit alerts'; };
+        $fn = function () { return $customer . ' alerts'; };
         add_filter( 'wp_mail_from', $fe ); add_filter( 'wp_mail_from_name', $fn );
-        $html = '<div style="font-family:Arial;font-size:14px">' . $body . '<p style="font-size:12px;color:#666;margin-top:18px"><a href="' . esc_url( home_url( '/inorbit-dashboard/' ) ) . '">Open the Inorbit dashboard</a></p></div>';
+        $html = '<div style="font-family:Arial;font-size:14px">' . $body . '<p style="font-size:12px;color:#666;margin-top:18px"><a href="' . esc_url( home_url( '/' . ThreeR_Fleet::dash_slug( $customer ) . '/' ) ) . '">Open the ' . esc_html( $customer ) . ' dashboard</a></p></div>';
         $ok = wp_mail( $to, $subject, $html, [ 'Content-Type: text/html; charset=UTF-8' ] );
         remove_filter( 'wp_mail_from', $fe ); remove_filter( 'wp_mail_from_name', $fn );
         return $ok;
@@ -52,7 +52,8 @@ class ThreeR_Alerts {
         $label = $payload['status']['label'] ?? ( 'State ' . $st );
         $temp  = $payload['live']['temperature_c'] ?? null;
         $body  = '<h2 style="color:#c0392b;margin:0 0 8px">Critical alarm: ' . esc_html( $label ) . '</h2><p><b>' . esc_html( self::name( $uid ) ) . '</b><br>Time: ' . esc_html( current_time( 'd M Y, H:i' ) ) . ( $temp !== null ? '<br>Temperature: ' . esc_html( $temp ) . ' &deg;C' : '' ) . '</p><p>The machine is stopped or faulted. Please check it on site.</p>';
-        self::mail( '[Inorbit] ' . $label . ' - ' . self::name( $uid ), $body );
+        $cu = ThreeR_Fleet::customer_for( $uid );
+        self::mail( '[' . $cu . '] ' . $label . ' - ' . self::name( $uid ), $body, $cu );
     }
 
     public function check_offline() {
@@ -65,10 +66,10 @@ class ThreeR_Alerts {
             $flag = 'tru_off_' . md5( $m['uid'] );
             if ( $age > 900 && ! get_option( $flag ) ) {
                 update_option( $flag, current_time( 'mysql' ), false );
-                self::mail( '[Inorbit] Machine offline - ' . self::name( $m['uid'] ), '<h2 style="color:#b7791f;margin:0 0 8px">Machine offline</h2><p><b>' . esc_html( self::name( $m['uid'] ) ) . '</b> has sent no data since ' . esc_html( $row ) . ' (' . round( $age / 60 ) . ' min ago).<br>Check power, the router and its SIM or network.</p>' );
+                self::mail( '[' . $m['customer'] . '] Machine offline - ' . self::name( $m['uid'] ), '<h2 style="color:#b7791f;margin:0 0 8px">Machine offline</h2><p><b>' . esc_html( self::name( $m['uid'] ) ) . '</b> has sent no data since ' . esc_html( $row ) . ' (' . round( $age / 60 ) . ' min ago).<br>Check power, the router and its SIM or network.</p>', $m['customer'] );
             } elseif ( $age <= 300 && get_option( $flag ) ) {
                 delete_option( $flag );
-                self::mail( '[Inorbit] Machine back online - ' . self::name( $m['uid'] ), '<h2 style="color:#1f7a4d;margin:0 0 8px">Machine back online</h2><p><b>' . esc_html( self::name( $m['uid'] ) ) . '</b> is sending data again.</p>' );
+                self::mail( '[' . $m['customer'] . '] Machine back online - ' . self::name( $m['uid'] ), '<h2 style="color:#1f7a4d;margin:0 0 8px">Machine back online</h2><p><b>' . esc_html( self::name( $m['uid'] ) ) . '</b> is sending data again.</p>', $m['customer'] );
             }
         }
     }

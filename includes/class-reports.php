@@ -148,7 +148,7 @@ class ThreeR_Reports {
         $out   = [ 'daily' => [], 'monthly' => [], 'cycles' => [], 'alarms' => [], 'offline' => [] ];
         $names = [];
         foreach ( $fleet as $m ) {
-            $names[ $m['uid'] ] = $m['name'];
+            $names[ $m['uid'] ] = ( $m['customer'] ?? '' ) . ' - ' . $m['name'];
             if ( $uid && $uid !== 'all' && $uid !== $m['uid'] ) { continue; }
             $c = self::compute( $m['uid'], $from, $to );
             foreach ( $out as $k => $_ ) { $out[ $k ] = array_merge( $out[ $k ], $c[ $k ] ); }
@@ -187,19 +187,33 @@ class ThreeR_Reports {
 
     public function send_weekly() { return self::send_now(); }
 
+    public static function customer_emails( $c ) {
+        $raw = (string) get_option( 'tru_emails_' . strtolower( $c ), '' );
+        return array_values( array_filter( array_map( 'sanitize_email', preg_split( '/[\s,;]+/', $raw ) ), 'is_email' ) );
+    }
+
     public static function send_now() {
-        $to = self::recipients();
-        if ( ! $to ) { return false; }
+        $ok = false;
+        if ( self::recipients() ) { $ok = self::send_report( null, self::recipients() ) || $ok; }
+        foreach ( [ 'Inorbit', 'LEANpio' ] as $c ) {
+            $to = array_values( array_diff( self::customer_emails( $c ), self::recipients() ) );
+            if ( $to ) { $ok = self::send_report( $c, $to ) || $ok; }
+        }
+        return $ok;
+    }
+
+    private static function send_report( $only, $to ) {
         $now  = current_time( 'timestamp' );
         $from = date( 'Y-m-d', $now - 7 * 86400 );
         $end  = date( 'Y-m-d', $now - 86400 );
-        $html = '<h2 style="font-family:Arial">Inorbit weekly report &middot; ' . esc_html( $from ) . ' to ' . esc_html( $end ) . '</h2>';
+        $html = '<h2 style="font-family:Arial">' . ( $only ? esc_html( $only ) . ' weekly report' : 'Weekly report (all customers)' ) . ' &middot; ' . esc_html( $from ) . ' to ' . esc_html( $end ) . '</h2>';
         foreach ( ThreeR_Fleet::fleet() as $m ) {
+            if ( $only && $m['customer'] !== $only ) { continue; }
             $c = self::compute( $m['uid'], $from, $end );
             $cy = array_sum( wp_list_pluck( $c['daily'], 'cycles' ) );
             $rh = array_sum( wp_list_pluck( $c['daily'], 'run_hours' ) );
             $fl = array_sum( wp_list_pluck( $c['daily'], 'faults' ) );
-            $html .= '<h3 style="font-family:Arial;margin-bottom:4px">' . esc_html( $m['name'] ) . '</h3><p style="font-family:Arial;margin:0 0 6px;font-size:13px">Cycles: <b>' . (int) $cy . '</b> &middot; Motor run: <b>' . round( $rh, 1 ) . ' h</b> &middot; Fault events: <b>' . (int) $fl . '</b> &middot; Offline periods: <b>' . count( $c['offline'] ) . '</b></p>';
+            $html .= '<h3 style="font-family:Arial;margin-bottom:4px">' . esc_html( $m['customer'] . ' - ' . $m['name'] ) . '</h3><p style="font-family:Arial;margin:0 0 6px;font-size:13px">Cycles: <b>' . (int) $cy . '</b> &middot; Motor run: <b>' . round( $rh, 1 ) . ' h</b> &middot; Fault events: <b>' . (int) $fl . '</b> &middot; Offline periods: <b>' . count( $c['offline'] ) . '</b></p>';
             $html .= '<table cellpadding="5" style="border-collapse:collapse;font-family:Arial;font-size:12px"><tr style="background:#e8f4ee"><th align="left">Date</th><th>Cycles</th><th>Run h</th><th>Waste kg</th><th>Avg &deg;C</th><th>Max &deg;C</th><th>Max A</th><th>Faults</th></tr>';
             foreach ( $c['daily'] as $d ) {
                 $html .= '<tr style="border-top:1px solid #ddd"><td>' . esc_html( $d['date'] ) . '</td><td align="center">' . (int) $d['cycles'] . '</td><td align="center">' . esc_html( $d['run_hours'] ) . '</td><td align="center">' . (int) $d['waste_kg'] . '</td><td align="center">' . esc_html( $d['temp_avg'] ?? '-' ) . '</td><td align="center">' . esc_html( $d['temp_max'] ?? '-' ) . '</td><td align="center">' . esc_html( $d['current_max'] ?? '-' ) . '</td><td align="center">' . (int) $d['faults'] . '</td></tr>';
@@ -208,9 +222,9 @@ class ThreeR_Reports {
         }
         $html .= '<p style="font-family:Arial;font-size:12px;margin-top:16px"><a href="' . esc_url( home_url( '/inorbit-dashboard/#/reports' ) ) . '">Open the full reports</a></p>';
         $fe = function () { return get_option( 'tru_report_from', 'admin@urbancompost.cloud' ); };
-        $fn = function () { return 'Inorbit by 3R Urban Smart Solutions'; };
+        $fn = function () { return '3R Urban Smart Solutions'; };
         add_filter( 'wp_mail_from', $fe ); add_filter( 'wp_mail_from_name', $fn );
-        $ok = wp_mail( $to, 'Inorbit weekly report ' . $from . ' to ' . $end, $html, [ 'Content-Type: text/html; charset=UTF-8' ] );
+        $ok = wp_mail( $to, ( $only ? $only . ' weekly report ' : '3R weekly report (all customers) ' ) . $from . ' to ' . $end, $html, [ 'Content-Type: text/html; charset=UTF-8' ] );
         remove_filter( 'wp_mail_from', $fe ); remove_filter( 'wp_mail_from_name', $fn );
         return $ok;
     }
@@ -226,6 +240,8 @@ class ThreeR_Reports {
         if ( isset( $_POST['tru_rep_nonce'] ) && wp_verify_nonce( $_POST['tru_rep_nonce'], 'tru_rep' ) ) {
             update_option( 'tru_report_emails', sanitize_textarea_field( wp_unslash( $_POST['emails'] ?? '' ) ) );
             update_option( 'tru_alert_emails', sanitize_textarea_field( wp_unslash( $_POST['alert_emails'] ?? '' ) ) );
+            update_option( 'tru_emails_inorbit', sanitize_textarea_field( wp_unslash( $_POST['emails_inorbit'] ?? '' ) ) );
+            update_option( 'tru_emails_leanpio', sanitize_textarea_field( wp_unslash( $_POST['emails_leanpio'] ?? '' ) ) );
             update_option( 'tru_alert_door', isset( $_POST['alert_door'] ) ? '1' : '0' );
             $msg = 'Saved.';
             if ( isset( $_POST['send_alert_test'] ) ) { $msg .= ThreeR_Alerts::mail( '[Inorbit] Test alert', '<h2>Test alert</h2><p>Critical alarm emails are working.</p>' ) ? ' Test alert sent.' : ' Could not send the test alert (add a valid address).'; }
@@ -240,6 +256,9 @@ class ThreeR_Reports {
         echo '<textarea id="emails" name="emails" rows="4" cols="60">' . esc_textarea( (string) get_option( 'tru_report_emails', '' ) ) . '</textarea>';
         echo '<h2>Critical alarm emails</h2><p>Sent immediately for emergency stop, motor trips, phase loss and heater trip, and when a machine goes offline for 15 minutes (and when it recovers). Leave blank to use the weekly report recipients.</p>';
         echo '<textarea name="alert_emails" rows="3" cols="60">' . esc_textarea( (string) get_option( 'tru_alert_emails', '' ) ) . '</textarea>';
+        echo '<h2>Per-customer recipients</h2><p>Receive alerts AND the weekly report for that customer\'s machines only.</p>';
+        echo '<p><b>Inorbit</b></p><textarea name="emails_inorbit" rows="2" cols="60">' . esc_textarea( (string) get_option( 'tru_emails_inorbit', '' ) ) . '</textarea>';
+        echo '<p><b>LEANpio</b></p><textarea name="emails_leanpio" rows="2" cols="60">' . esc_textarea( (string) get_option( 'tru_emails_leanpio', '' ) ) . '</textarea>';
         echo '<p><label><input type="checkbox" name="alert_door" value="1"' . checked( get_option( 'tru_alert_door', '0' ), '1', false ) . '> Also email when the door is open</label></p>';
         echo '<p><button class="button button-primary" name="save" value="1">Save</button> <button class="button" name="send_now" value="1">Save &amp; send a test weekly report</button> <button class="button" name="send_alert_test" value="1">Save &amp; send a test alert</button></p></form></div>';
     }
