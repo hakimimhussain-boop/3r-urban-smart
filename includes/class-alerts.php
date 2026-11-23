@@ -44,7 +44,7 @@ class ThreeR_Alerts {
     public function on_panel( $uid, $payload, $raw ) {
         $st = (int) ( $payload['status']['state_code'] ?? 0 );
         $crit = [ 4, 5, 6, 8, 9 ];
-        if ( get_option( 'tru_alert_door', '0' ) === '1' ) { $crit[] = 7; }
+        if ( get_option( 'tru_alert_door', '0' ) === '1' ) { $crit[] = 7; $crit[] = 10; }
         if ( ! in_array( $st, $crit, true ) ) { return; }
         $key = 'tru_al_' . md5( $uid . '|' . $st );
         if ( get_transient( $key ) ) { return; }

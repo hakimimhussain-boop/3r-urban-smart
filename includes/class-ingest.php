@@ -163,10 +163,11 @@ class ThreeR_Ingest {
         if ( isset( $r[2] ) ) {
             $names = [ 0 => 'IDLE', 1 => 'COMPOSTING', 2 => 'CYCLE COMPLETE / STANDBY', 3 => 'REMOVING COMPOST',
                        4 => 'EMERGENCY STOP', 5 => 'MAIN MOTOR TRIP', 6 => 'BLOWER MOTOR TRIP', 7 => 'DOOR OPEN',
-                       8 => 'PHASE LOSS / REVERSE FAULT', 9 => 'HEATER TRIP' ];
+                       8 => 'PHASE LOSS / REVERSE FAULT', 9 => 'HEATER TRIP', 10 => 'DOOR OPEN' ];
             $c = (int) $r[2];
             $p['status'] = [ 'healthy' => ! ( $c >= 4 && $c <= 9 ), 'label' => $names[ $c ] ?? ( 'STATE ' . $c ),
                              'cycle_running' => ( $c === 1 || $c === 3 ), 'state_code' => $c ];
+            $p['outputs']['door'] = ( $c === 10 ) ? 'OPEN' : 'CLOSE'; // door open = state 10 (tested on site 23 Nov 2026); X2 is not the door
         }
         if ( isset( $r[0] ) ) { $p['outputs']['main_motor'] = [ 0 => 'OFF', 1 => 'FWD', 2 => 'REV' ][ (int) $r[0] ] ?? '—'; }
         if ( isset( $r[9000] ) ) {
@@ -179,9 +180,8 @@ class ThreeR_Ingest {
         // X0/X1 polarity is not verified on this machine (X0 read 1 while healthy), so they are exposed raw only.
         if ( isset( $r[9002] ) ) {
             $x = (int) $r[9002];
-            $door = ( $x & 4 ) === 4;
+            $door = isset( $r[2] ) && (int) $r[2] === 10;
             $phase_bad = ( $x & 8 ) === 0;
-            $p['outputs']['door'] = $door ? 'OPEN' : 'CLOSE';
             $p['inputs_raw'] = [ 'X0' => $x & 1, 'X1' => ( $x >> 1 ) & 1, 'X2' => ( $x >> 2 ) & 1, 'X3' => ( $x >> 3 ) & 1 ];
             $p['alarms_live'] = [ 'Door open' => $door, 'Phase loss / reverse' => $phase_bad ];
             if ( $phase_bad ) { $p['status']['healthy'] = false; }
