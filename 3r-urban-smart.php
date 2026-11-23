@@ -3,7 +3,7 @@
  * Plugin Name:     3R Urban Smart Solutions
  * Plugin URI:      https://3rurban.com
  * Description:     Full 3R Urban Smart Solutions platform — public website + customer portal with live telemetry, alerts, reports, and account management.
- * Version:         2.6.9
+ * Version:         2.6.10
  * Author:          3R Urban Smart Solutions
  * Author URI:      https://3rurban.com
  * Text Domain:     3r-urban
@@ -13,7 +13,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'TRU_VERSION',    '2.6.9' );
+define( 'TRU_VERSION',    '2.6.10' );
 define( 'TRU_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'TRU_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 

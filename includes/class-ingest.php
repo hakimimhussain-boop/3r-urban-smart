@@ -107,6 +107,10 @@ class ThreeR_Ingest {
                         // Coil read of Y0..Y3 (Delta Y0 = 1280, router is 1-based): router returns the coil byte in the high byte
                         $v0 = (int) ( array_values( $vals )[0] ?? 0 );
                         $out[9000] = ( $v0 & 0xFF00 ) ? ( $v0 >> 8 ) : $v0;
+                    } elseif ( is_array( $vals ) && (int) $rec['addr'] === 1025 ) {
+                        // Discrete inputs X0..X3 (Delta X0 = 1024, router 1-based, function 2): byte comes back in the high byte
+                        $v0 = (int) ( array_values( $vals )[0] ?? 0 );
+                        $out[9002] = ( $v0 & 0xFF00 ) ? ( $v0 >> 8 ) : $v0;
                     } elseif ( is_array( $vals ) && (int) $rec['addr'] === 2054 ) {
                         // Coil M5 (Delta M0 = 2048, router 1-based): auto/manual mode, coil byte comes back in the high byte
                         $v0 = (int) ( array_values( $vals )[0] ?? 0 );
@@ -171,6 +175,17 @@ class ThreeR_Ingest {
             $p['outputs']['heater'] = ( $y & 8 ) ? 'ON' : 'OFF';
         }
         if ( isset( $r[9001] ) ) { $p['status']['mode'] = ( (int) $r[9001] & 1 ) ? 'Manual' : 'Auto'; }
+        // PLC inputs (manual 11.11): X0 main motor trip, X1 blower trip, X2 door open (ON = open), X3 SPP OK (ON = healthy).
+        // X0/X1 polarity is not verified on this machine (X0 read 1 while healthy), so they are exposed raw only.
+        if ( isset( $r[9002] ) ) {
+            $x = (int) $r[9002];
+            $door = ( $x & 4 ) === 4;
+            $phase_bad = ( $x & 8 ) === 0;
+            $p['outputs']['door'] = $door ? 'OPEN' : 'CLOSE';
+            $p['inputs_raw'] = [ 'X0' => $x & 1, 'X1' => ( $x >> 1 ) & 1, 'X2' => ( $x >> 2 ) & 1, 'X3' => ( $x >> 3 ) & 1 ];
+            $p['alarms_live'] = [ 'Door open' => $door, 'Phase loss / reverse' => $phase_bad ];
+            if ( $phase_bad ) { $p['status']['healthy'] = false; }
+        }
         if ( isset( $r[102] ) ) { $p['live']['temperature_c'] = round( $r[102] / 10, 1 ); } // inside heater temp (D102 read 86.1 vs HMI 85.5 C)
         if ( isset( $r[132] ) ) { $p['live']['humidity_pct'] = (int) $r[132]; }
         if ( isset( $r[109] ) ) { $p['live']['energy_meter_kwh'] = round( ( (int) $r[109] & 0xFFFF ) / 100, 2 ); } // 0.01 kWh, unsigned 16-bit (wraps at 655.35)
