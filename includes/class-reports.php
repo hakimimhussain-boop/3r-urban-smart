@@ -87,7 +87,7 @@ class ThreeR_Reports {
             }
             if ( $r['waste'] !== null ) { $D['waste_kg'] = max( $D['waste_kg'], (int) $r['waste'] ); }
             if ( $r['kwh'] !== null ) { $D['kwh'] = max( $D['kwh'], (float) $r['kwh'] ); }
-            if ( isset( $r['meter'] ) && $r['meter'] !== null && (float) $r['meter'] < 100000 ) { $mv = (float) $r['meter']; $D['_mlo'] = isset( $D['_mlo'] ) ? min( $D['_mlo'], $mv ) : $mv; $D['_mhi'] = isset( $D['_mhi'] ) ? max( $D['_mhi'], $mv ) : $mv; }
+            if ( isset( $r['meter'] ) && $r['meter'] !== null && (float) $r['meter'] < 100000 ) { $mv = (float) $r['meter']; if ( isset( $D['_mlast'] ) ) { $dv = $mv - $D['_mlast']; if ( $dv > 0 && $dv <= 5 ) { $D['_msum'] = ( $D['_msum'] ?? 0 ) + $dv; } } $D['_mlast'] = $mv; }
 
             // Cycle log: state 1 starts a cycle, state 2 completes it; idle / removing compost aborts it.
             if ( $start === null && $st === 1 ) { $start = [ 'from' => $r['ts'], 'peak' => null, 'cur' => null, 'waste' => 0 ]; }
@@ -109,8 +109,8 @@ class ThreeR_Reports {
             $D['temp_avg']    = $D['_tn'] ? round( $D['_ts'] / $D['_tn'], 1 ) : null;
             $D['current_avg'] = $D['_cn'] ? round( $D['_cs'] / $D['_cn'], 2 ) : null;
             $D['current_max'] = $D['current_max'] === null ? null : round( $D['current_max'], 2 );
-            if ( ! $D['kwh'] && isset( $D['_mlo'] ) && $D['_mhi'] > $D['_mlo'] ) { $D['kwh'] = round( $D['_mhi'] - $D['_mlo'], 2 ); } // meter-based machines
-            unset( $D['_mlo'], $D['_mhi'] );
+            if ( ! $D['kwh'] && ! empty( $D['_msum'] ) ) { $D['kwh'] = round( $D['_msum'], 2 ); } // meter-based machines: sum of small consecutive increases
+            unset( $D['_mlast'], $D['_msum'] );
             $D['run_hours']   = round( $D['run_hours'], 2 );
             $D['offline_hours'] = round( $D['offline_hours'], 2 );
         }
