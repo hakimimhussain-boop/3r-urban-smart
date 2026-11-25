@@ -41,8 +41,8 @@ class ThreeR_Reports {
         $t  = $wpdb->prefix . ThreeR_Fleet::TABLE;
         $f  = $from . ' 00:00:00';
         $e  = $to . ' 23:59:59';
-        $prev = $wpdb->get_row( $wpdb->prepare( "SELECT ts,state,motor,temp,kwh,current,waste FROM `$t` WHERE machine_uid=%s AND ts<%s ORDER BY id DESC LIMIT 1", $uid, $f ), ARRAY_A );
-        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT ts,state,motor,temp,kwh,current,waste FROM `$t` WHERE machine_uid=%s AND ts>=%s AND ts<=%s ORDER BY id ASC", $uid, $f, $e ), ARRAY_A );
+        $prev = $wpdb->get_row( $wpdb->prepare( "SELECT ts,state,motor,temp,kwh,current,waste,meter FROM `$t` WHERE machine_uid=%s AND ts<%s ORDER BY id DESC LIMIT 1", $uid, $f ), ARRAY_A );
+        $rows = $wpdb->get_results( $wpdb->prepare( "SELECT ts,state,motor,temp,kwh,current,waste,meter FROM `$t` WHERE machine_uid=%s AND ts>=%s AND ts<=%s ORDER BY id ASC", $uid, $f, $e ), ARRAY_A );
 
         $daily = []; $cycles = []; $alarms = []; $offline = [];
         $last = $prev; $start = null; $open_alarm = null;
@@ -87,6 +87,7 @@ class ThreeR_Reports {
             }
             if ( $r['waste'] !== null ) { $D['waste_kg'] = max( $D['waste_kg'], (int) $r['waste'] ); }
             if ( $r['kwh'] !== null ) { $D['kwh'] = max( $D['kwh'], (float) $r['kwh'] ); }
+            if ( isset( $r['meter'] ) && $r['meter'] !== null && (float) $r['meter'] < 100000 ) { $mv = (float) $r['meter']; $D['_mlo'] = isset( $D['_mlo'] ) ? min( $D['_mlo'], $mv ) : $mv; $D['_mhi'] = isset( $D['_mhi'] ) ? max( $D['_mhi'], $mv ) : $mv; }
 
             // Cycle log: state 1 starts a cycle, state 2 completes it; idle / removing compost aborts it.
             if ( $start === null && $st === 1 ) { $start = [ 'from' => $r['ts'], 'peak' => null, 'cur' => null, 'waste' => 0 ]; }
@@ -108,6 +109,8 @@ class ThreeR_Reports {
             $D['temp_avg']    = $D['_tn'] ? round( $D['_ts'] / $D['_tn'], 1 ) : null;
             $D['current_avg'] = $D['_cn'] ? round( $D['_cs'] / $D['_cn'], 2 ) : null;
             $D['current_max'] = $D['current_max'] === null ? null : round( $D['current_max'], 2 );
+            if ( ! $D['kwh'] && isset( $D['_mlo'] ) && $D['_mhi'] > $D['_mlo'] ) { $D['kwh'] = round( $D['_mhi'] - $D['_mlo'], 2 ); } // meter-based machines
+            unset( $D['_mlo'], $D['_mhi'] );
             $D['run_hours']   = round( $D['run_hours'], 2 );
             $D['offline_hours'] = round( $D['offline_hours'], 2 );
         }
@@ -144,7 +147,9 @@ class ThreeR_Reports {
         if ( $from > $to ) { $x = $from; $from = $to; $to = $x; }
         if ( ( strtotime( $to ) - strtotime( $from ) ) > 400 * 86400 ) { $from = date( 'Y-m-d', strtotime( $to ) - 400 * 86400 ); }
         $uid   = $req->get_param( 'uid' );
+        $cust  = sanitize_text_field( (string) $req->get_param( 'customer' ) );
         $fleet = ThreeR_Fleet::fleet();
+        if ( $cust !== '' ) { $fleet = array_values( array_filter( $fleet, function ( $m ) use ( $cust ) { return strcasecmp( $m['customer'], $cust ) === 0; } ) ); if ( $uid && $uid !== 'all' && ! in_array( $uid, wp_list_pluck( $fleet, 'uid' ), true ) ) { $uid = '__none__'; } }
         $out   = [ 'daily' => [], 'monthly' => [], 'cycles' => [], 'alarms' => [], 'offline' => [] ];
         $names = [];
         foreach ( $fleet as $m ) {
